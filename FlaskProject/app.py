@@ -1,13 +1,11 @@
-from flask import Flask, session, request, jsonify
+from flask import Flask, request, jsonify
 from functools import wraps
 from passlib.hash import sha256_crypt
-from flask_cors import CORS
 import psycopg2
 import jwt
 import datetime
 
 app = Flask(__name__)
-CORS(app)
 
 
 conn = psycopg2.connect(
@@ -18,6 +16,8 @@ conn = psycopg2.connect(
 )
 
 app.secret_key = "FlaskReactAppSecretKey"
+
+
 
 
 class User:
@@ -56,16 +56,26 @@ def validate_username(username):
 def validate_email(email):
     return "@" in email
 
-
-def login_required(f):
+def token_required(f):
     @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if "logged_in" in session:
-            return f(*args, **kwargs)
-        else:
-            response = jsonify({"message": "Giriş yapmanız gerekiyor"})
-            response.status_code = 400
-            return response
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        if not token:
+            return jsonify({'message': 'Token bulunamadı'}), 401
+        try:
+            data = jwt.decode(token, app.secret_key, algorithms=["HS256"])
+            query = "SELECT * FROM users WHERE id=%s"
+            cursor = conn.cursor()
+            cursor.execute(query, (data['auth_user_id'],))
+            auth_user = cursor.fetchone()
+            auth_user_id = auth_user[0]
+            cursor.close()
+        except:
+            return jsonify({"message": "Token geçersiz!"}), 401
+        return f(auth_user_id, *args, **kwargs)
+    return decorated
 
 
 @app.route("/register", methods=["POST"])
@@ -104,9 +114,10 @@ def login():
     if user:
         real_password = user[4]
         if sha256_crypt.verify(password_entered, real_password):
-            session["logged_in"] = True
-            session["username"] = username
-            response = jsonify({"logged_in": session["logged_in"], "username": session["username"]})
+            token = jwt.encode({'auth_user_id': user[0], 'exp': datetime.datetime.now() + datetime.timedelta(days=1.0)},
+                               app.secret_key, algorithm="HS256")
+            auth_user = User(user[0], user[1], user[2], user[3])
+            response = jsonify({"token": token, "user": auth_user.serialize_user()})
             response.status_code = 200
             return response
         else:
@@ -117,14 +128,6 @@ def login():
         response = jsonify({"message": "Kullanıcı bulunamadı"})
         response.status_code = 404
         return response
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    session.clear()
-    response = jsonify({"message": "Oturum kapatıldı!"})
-    response.status_code = 200
-    return response
 
 
 def get_user(id):
@@ -146,52 +149,27 @@ def get_user(id):
         return response
 
 
-def get_authenticated_user():
-    username = session["username"]
-    cursor = conn.cursor()
-    query = "SELECT * FROM users WHERE username=%s"
-    cursor.execute(query, (username,))
-    data = cursor.fetchone()
-    cursor.close()
-    if data:
-        user_id = int(data[0])
-        name = data[1]
-        uname = data[2]
-        email = data[3]
-        user = User(user_id, name, uname, email)
-        return user
-    else:
-        response = jsonify({"message": "Bir hata oldu"})
-        response.status_code = 400
-        return response
-
-
 @app.route("/post", methods=["POST"])
-def create_post():
+@token_required
+def create_post(auth_user_id):
     data = request.json
     content = data["content"]
     date = datetime.date.today()
-    publisher_username = get_authenticated_user()
-    if publisher_username:
-        user_id = publisher_username.id
-        query_for_post = "INSERT INTO post(content, date, user_id) VALUES (%s,%s,%s)"
-        cursor = conn.cursor()
-        cursor.execute(query_for_post, (content, date, user_id))
-        conn.commit()
-        cursor.close()
-        response = jsonify({"message": "Post başarıyla paylaşıldı"})
-        response.status_code = 200
-        return response
-    else:
-        response = jsonify({"message": "Bir problem oluştu"})
-        response.status_code = 400
-        return response
+    query_for_post = "INSERT INTO post(content, date, user_id) VALUES (%s,%s,%s)"
+    cursor = conn.cursor()
+    cursor.execute(query_for_post, (content, date, auth_user_id))
+    conn.commit()
+    cursor.close()
+
+    response = jsonify({"message": "Post başarıyla paylaşıldı"})
+    response.status_code = 200
+    return response
 
 
 @app.route("/post")
 def get_posts():
     cursor = conn.cursor()
-    query = "SELECT * FROM post"
+    query = "SELECT * FROM post ORDER BY DATE DESC"
     cursor.execute(query)
     posts = cursor.fetchall()
     cursor.close()
@@ -234,16 +212,15 @@ def get_post(id):
 
 
 @app.route("/post/<int:id>", methods=["DELETE"])
-def delete_post(id):
+@token_required
+def delete_post(auth_user_id, id):
     cursor = conn.cursor()
     query1 = "SELECT * FROM post WHERE id=%s"
     cursor.execute(query1, (id,))
     data = cursor.fetchone()
     if data:
-        user_id = int(data[3])
-        user = get_user(user_id)
-        auth_user = get_authenticated_user()
-        if user == auth_user:
+        user = get_user(auth_user_id)
+        if user.id == auth_user_id:
             query2 = "DELETE FROM post WHERE id=%s"
             cursor.execute(query2, (id,))
             conn.commit()
