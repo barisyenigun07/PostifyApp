@@ -10,7 +10,7 @@ const Feed = () => {
             .then(res => setPosts(res.data))
     }, [])
   return (
-    <div>
+    <div style={{display: "flex", justifyContent: "center", flexDirection: "column", alignItems: "center"}}>
         <FormPost/>
         {(posts.length === 0) ? <p>Herhangi bir post paylaşılmadı</p> : posts.map(
             (post) => <Post content={post.content} date={post.date} user={post.user}/>

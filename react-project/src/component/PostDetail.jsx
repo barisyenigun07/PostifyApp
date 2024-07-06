@@ -12,7 +12,7 @@ const PostDetail = () => {
          .catch(err => alert(err))
   }, [id]);
   return (
-    <div>
+    <div className="mt-1 bg-slate-700 text-red-600">
         {post.content}
     </div>
   )
