@@ -19,7 +19,6 @@ app.secret_key = "FlaskReactAppSecretKey"
 
 
 
-
 class User:
     def __init__(self, id, name, username, email):
         self.id = id
@@ -148,6 +147,14 @@ def get_user(id):
         response.status_code = 404
         return response
 
+@app.route("/user/<int:id>")
+def get_user_details(id):
+    user = get_user(id)
+    if user:
+        return jsonify(user.serialize_user()), 200
+    else:
+        return jsonify({"message": "Kullanıcı Bulunamadı"}), 404
+
 
 @app.route("/post", methods=["POST"])
 @token_required
@@ -171,6 +178,28 @@ def get_posts():
     cursor = conn.cursor()
     query = "SELECT * FROM post ORDER BY DATE DESC"
     cursor.execute(query)
+    posts = cursor.fetchall()
+    cursor.close()
+    response = []
+    if posts:
+        for row in posts:
+            post_id = row[0]
+            content = row[1]
+            date = row[2]
+            user_id = row[3]
+            user = get_user(int(user_id))
+            post = Post(int(post_id), content, date, user)
+            serialized_post = post.serialize_post()
+            response.append(serialized_post)
+        return jsonify(response), 200
+    else:
+        return jsonify(response), 404
+
+@app.route("/post/user/<int:user_id>")
+def get_posts_by_user(user_id):
+    cursor = conn.cursor()
+    query = "SELECT * FROM post, user WHERE post.user_id=%s ORDER BY DATE DESC"
+    cursor.execute(query, (user_id,))
     posts = cursor.fetchall()
     cursor.close()
     response = []
@@ -236,7 +265,6 @@ def delete_post(auth_user_id, id):
         response = jsonify({"message": "Böyle bir post yok"})
         response.status_code = 404
         return response
-
 
 if __name__ == "__main__":
     app.run(debug=True)
